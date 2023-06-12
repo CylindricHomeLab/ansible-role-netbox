@@ -1,0 +1,197 @@
+---
+- name: Install dependencies
+  ansible.builtin.package:
+    name:
+      - python3
+      - python3-pip
+      - python3-venv
+      - python3-dev
+      - build-essential
+      - libxml2-dev
+      - libxslt1-dev
+      - libffi-dev
+      - libpq-dev
+      - libssl-dev
+      - zlib1g-dev
+    state: present
+
+- name: Install latest pip
+  pip: 
+    name: pip
+    state: latest
+
+- name: Add the user
+  ansible.builtin.user:
+    name: netbox
+    comment: Netbox
+    system: true
+    state: present
+
+- name: Download package
+  ansible.builtin.unarchive:
+    src: "{{ netbox.source_url }}"
+    dest: /opt
+    remote_src: yes
+  register: netbox_files_installed
+
+- name: Create symlink to current version
+  ansible.builtin.file:
+    src: "/opt/{{ netbox.unzip_directory }}"
+    dest: /opt/netbox
+    state: link
+
+- name: Set ownership of media
+  ansible.builtin.file:
+    path: /opt/netbox/netbox/media
+    owner: netbox
+    group: netbox
+
+- name: Deploy configuration
+  ansible.builtin.template:
+    src: configuration.py.j2
+    dest: /opt/netbox/netbox/netbox/configuration.py
+
+- name: Upgrade
+  ansible.builtin.shell: |
+    ./upgrade.sh
+  args:
+    chdir: "/opt/netbox"
+    creates: "/opt/netbox/venv"
+  when: (netbox_files_installed.changed == true)
+  register: netbox_upgraded
+
+# - name: Check admin user exists
+#   ansible.builtin.shell: |
+#     source venv/bin/activate
+#     cd netbox
+#     cat <<EOF | python manage.py shell
+#     from django.contrib.auth import get_user_model
+#     User = get_user_model()
+#     if (User.objects.filter(username='{{ netbox.super.user }}').exists()):
+#       print("user exists")
+#     else:
+#       print("user missing")
+#     EOF
+#   args:
+#     executable: /bin/bash
+#     chdir: "/opt/netbox"
+#   register:
+#     netbox_admin_user_check
+#   changed_when: false
+
+# - name: Create Admin User
+#   ansible.builtin.shell: |
+#     source venv/bin/activate
+#     cd netbox
+#     cat <<EOF | python manage.py shell
+#     from django.contrib.auth import get_user_model
+#     User = get_user_model()
+#     User.objects.filter(username='{{ netbox.super.user }}').exists() or \
+#         User.objects.create_superuser('{{ netbox.super.user }}', '{{ netbox.super.email }}', '{{ netbox.super.password }}')
+#     EOF
+#   args:
+#     executable: /bin/bash
+#     chdir: "/opt/netbox"
+#   when: (netbox_admin_user_check.stdout | default('') | trim == 'user missing')
+
+# - name: Set Admin password
+#   ansible.builtin.shell: |
+#     source venv/bin/activate
+#     cd netbox
+#     cat <<EOF | python manage.py shell
+#     from django.contrib.auth import authenticate
+#     from django.contrib.auth import get_user_model
+#     username = '{{ netbox.super.user }}'
+#     password = '{{ netbox.super.password }}'
+#     User = get_user_model()
+#     user = User.objects.get(username=username)
+
+#     auth_result = authenticate(username=username, password=password)
+#     if auth_result is not None:
+#         print('login success')
+#     else:
+#         user.set_password(password)
+#         user.save()
+#         print('password reset')
+#     EOF
+#   args:
+#     executable: /bin/bash
+#     chdir: "/opt/netbox"
+#   register:
+#     netbox_admin_login_check
+#   changed_when: "'password reset' in netbox_admin_login_check.stdout"
+  
+# - name: Install Gunicorn script
+#   ansible.builtin.template:
+#     src: gunicorn.py.j2
+#     dest: /opt/netbox/gunicorn.py
+
+# - name: Install netbox-rq systemd script
+#   ansible.builtin.copy:
+#     src: /opt/netbox/contrib/netbox-rq.service
+#     dest: /etc/systemd/system/
+#     remote_src: true
+#   notify: daemon-reload
+
+# - name: Install netbox systemd scripts
+#   ansible.builtin.copy:
+#     src: /opt/netbox/contrib/netbox.service
+#     dest: /etc/systemd/system/
+#     remote_src: true
+#   notify: daemon-reload
+
+# - name: Start netbox
+#   ansible.builtin.systemd:
+#     state: started
+#     enabled: yes
+#     daemon_reload: yes
+#     name: netbox
+
+# - name: Start netbox-rq
+#   ansible.builtin.systemd:
+#     state: started
+#     enabled: yes
+#     daemon_reload: yes
+#     name: netbox-rq
+
+# - name: Install nginx dependencies
+#   ansible.builtin.package:
+#     name:
+#       - nginx
+
+# - name: Deploy nginx config
+#   ansible.builtin.template:
+#     src: nginx.conf.j2
+#     dest: /etc/nginx/sites-available/netbox
+#   notify: Restart Nginx
+
+# - name: Deploy Private Key
+#   ansible.builtin.copy:
+#     content: "{{ netbox.web.private_key }}"
+#     dest: /etc/ssl/private/netbox.key
+#   notify: Restart Nginx
+
+# - name: Deploy Public Key
+#   ansible.builtin.copy:
+#     content: "{{ netbox.web.public_key }}"
+#     dest: /etc/ssl/certs/netbox.crt
+#   notify: Restart Nginx
+
+# - name: Remove default nginx site
+#   ansible.builtin.file:
+#     path: /etc/nginx/sites-enabled/default
+#     state: absent
+#   notify: Restart Nginx
+
+# - name: Create symlink to nginx config
+#   ansible.builtin.file:
+#     src: /etc/nginx/sites-available/netbox
+#     dest: /etc/nginx/sites-enabled/netbox
+#     state: link
+#   notify: Restart Nginx
+
+# - name: Enable Nginx
+#   ansible.builtin.systemd:
+#     name: nginx
+#     state: started
+#     enabled: true
